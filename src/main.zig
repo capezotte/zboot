@@ -124,8 +124,8 @@ pub fn main() usize {
     for (entries) |boot_entry| {
         puts(boot_entry.title.?);
     }
-    putsLiteral("I'm Going To Start The First Entry!");
 
+    // TODO: use this when implementing Linux memory requirements and co.
     //var img_file: *File = undefined;
     //root_dir.open(&img_file, entries[0].payload.linux, File.efi_file_mode_read, File.efi_file_archive).err() catch |e| {
     //    _ = con_out.outputString(entries[0].payload.linux);
@@ -136,23 +136,62 @@ pub fn main() usize {
     //    putsLiteral("out of memery");
     //    return 1;
     //};
-    const root_devpath = boot_services.openProtocolSt(uefi.protocols.DevicePathProtocol, root_handle) catch {
-        putsLiteral("root_devpath cringe!");
+    // TODO: real parsing
+    const entry = while (true) {
+        puts("Select entry (q to quit):");
+        const input_event = [_]uefi.Event{
+            uefi.system_table.con_in.?.wait_for_key,
+        };
+        var index: usize = undefined;
+        boot_services.waitForEvent(1, &input_event, &index).err() catch return 1;
+        var input_key: uefi.protocols.InputKey = undefined;
+        uefi.system_table.con_in.?.readKeyStroke(&input_key).err() catch continue;
+        const chr = input_key.unicode_char;
+        if (chr >= '1' and chr <= '9') {
+            index = @as(usize, chr - '1');
+            if (index < entries.len) {
+                break entries[index];
+            }
+        } else if (chr == 'q' or chr == 'Q') {
+            return 1;
+        }
+    } else return 1;
+    const root_devpath = boot_services.openProtocolSt(uefi.protocols.DevicePathProtocol, root_handle) catch |e| {
+        printf("Problem with root device path: {s}", .{@errorName(e)});
         return 1;
     };
-    const img_devpath = root_devpath.create_file_device_path(uefi.pool_allocator, entries[0].payload.linux) catch {
-        putsLiteral("img_devpath cringe!");
+    const img_devpath = root_devpath.create_file_device_path(uefi.pool_allocator, entry.payloadFilename()) catch |e| {
+        printf("Problem with payload device path: {s}", .{@errorName(e)});
         return 1;
     };
-    var next_handle: ?uefi.Handle = undefined;
-    boot_services.loadImage(false, uefi.handle, img_devpath, null, 0, &next_handle).err() catch |e| {
-        printf("Error loading image: {s}", .{@errorName(e)});
+    var next_handle = b: {
+        var tmp: ?uefi.Handle = undefined;
+        boot_services.loadImage(false, uefi.handle, img_devpath, null, 0, &tmp).err() catch |e| {
+            printf("Error loading image: {s}", .{@errorName(e)});
+            return 1;
+        };
+        if (tmp) |hndl| {
+            break :b hndl;
+        } else {
+            putsLiteral("Image is not loaded.");
+            return 1;
+        }
+    };
+    const next_image_meta = boot_services.openProtocolSt(uefi.protocols.LoadedImageProtocol, next_handle) catch |e| {
+        printf("Error loading information for payload image: {s}", .{@errorName(e)});
         return 1;
     };
-    _ = boot_services.startImage(next_handle orelse {
-        putsLiteral("Image is not loaded.");
+
+    const cmdline = entry.commandLine(uefi.pool_allocator) catch {
+        putsLiteral("Not enough memory to load commandline as UCS-2.");
         return 1;
-    }, null, null);
+    };
+    defer uefi.pool_allocator.free(cmdline);
+    _ = con_out.outputString(cmdline);
+    _ = con_out.outputString(L("\r\n"));
+    next_image_meta.load_options = @ptrCast(*anyopaque, cmdline.ptr);
+    next_image_meta.load_options_size = @intCast(u32, (cmdline.len + 1) * @sizeOf(u16));
+    _ = boot_services.startImage(next_handle, null, null);
 
     putsLiteral("I'm alive, oh no.");
     _ = uefi.system_table.boot_services.?.stall(5 * 1000 * 1000);

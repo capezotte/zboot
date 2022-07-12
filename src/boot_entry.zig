@@ -82,12 +82,43 @@ pub const BootEntry = struct {
         return mem.order(u16, &left.filename, &right.filename);
     }
 
+    /// Returns filename without considering underlying payload type.
+    pub fn payloadFilename(self: *const BootEntry) [:0]const u16 {
+        return switch (self.payload) {
+            .linux => |s| s,
+            .efi => |s| s,
+        };
+    }
+
+    /// Allocates the command line entries that would be used by this bootentry.
+    pub fn commandLine(self: *const BootEntry, alloc: mem.Allocator) ![:0]u16 {
+        var ret = std.ArrayList(u16).init(alloc);
+        errdefer ret.deinit();
+        if (self.options) |o| {
+            const o_u16 = try Lalloc(alloc, o);
+            defer alloc.free(o_u16);
+            try ret.appendSlice(o_u16);
+            try ret.append(' ');
+        }
+        if (self.initrd) |i| {
+            const i_u16 = try Lalloc(alloc, i);
+            defer alloc.free(i_u16);
+            mem.replaceScalar(u16, i_u16, '/', '\\');
+            try ret.appendSlice(L("initrd="));
+            try ret.appendSlice(i_u16);
+            try ret.append(' ');
+        }
+        _ = ret.popOrNull() orelse {}; // pop the space
+        return ret.toOwnedSliceSentinel(0);
+    }
+
     /// Prints a name for the entry. Buffer must be freed by caller.
     pub fn repr(self: *const BootEntry, alloc: mem.Allocator) ![]const u16 {
         var ret = std.ArrayList(u16).init(alloc);
         errdefer ret.deinit();
         if (self.title) |t| {
             const t_u16 = try Lalloc(alloc, t);
+            defer alloc.free(t_u16);
             try ret.appendSlice(t_u16);
         } else {
             try ret.appendSlice(switch (self.payload) {
@@ -96,7 +127,7 @@ pub const BootEntry = struct {
                     break :b l;
                 },
                 .efi => |e| b: {
-                    try ret.appendSlice(L("EFI "));
+                    try ret.appendSlice(L("EFI executable "));
                     break :b e;
                 },
             });
@@ -106,14 +137,13 @@ pub const BootEntry = struct {
             const v_u16 = try Lalloc(alloc, v);
             defer alloc.free(v_u16);
             try ret.appendSlice(v_u16);
-            try ret.appendSlice(L(")"));
+            try ret.append(')');
         }
+        // fall back to filename if nothing shows
         if (ret.items.len == 0) {
-            ret.deinit(); // Fission Mailed
-            return alloc.dupe(u16, &self.filename);
-        } else {
-            return ret.toOwnedSlice();
+            ret.appendSlice(self.filename);
         }
+        return ret.toOwnedSlice();
     }
 };
 
