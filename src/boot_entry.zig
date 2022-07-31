@@ -153,11 +153,11 @@ test "create BootEntry" {
         try testing.expectError(error.NoPayload, BootEntry.fromFile(testing.allocator, L(""), testFile));
     }
     {
-        const testFile = std.io.fixedBufferStream("title Windows 10\nefi  /efi/microsoft/bootmgfw.efi").reader();
+        const testFile = std.io.fixedBufferStream("title Windows 10\nefi  \\efi\\microsoft\\bootmgfw.efi").reader();
         const entry = try BootEntry.fromFile(testing.allocator, L("tmp.conf"), testFile);
         defer entry.deinit();
         try testing.expectEqualStrings(entry.title.?, "Windows 10");
-        try testing.expectEqualSlices(u16, entry.payload.efi, L("/efi/microsoft/bootmgfw.efi"));
+        try testing.expectEqualSlices(u16, entry.payload.efi, L("\\efi\\microsoft\\bootmgfw.efi"));
         try testing.expect(entry.version == null);
         try testing.expect(entry.options == null);
         try testing.expect(entry.initrd == null);
@@ -169,7 +169,7 @@ test "create BootEntry" {
         try testing.expectEqualStrings(entry.title.?, "Gentoo Linux");
         try testing.expectEqualStrings(entry.version.?, "4.20");
         try testing.expectEqualStrings(entry.options.?, "rw initrd=\\dracut.img");
-        try testing.expectEqualSlices(u16, entry.payload.linux, L("/vmlinuz-4.20"));
+        try testing.expectEqualSlices(u16, entry.payload.linux, L("\\vmlinuz-4.20"));
         try testing.expect(entry.initrd == null);
     }
 }
